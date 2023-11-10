@@ -1,0 +1,22 @@
+---
+title: "Actuarial Recipes"
+image: figures/profile.png
+about:
+  template: jolla
+  links:
+    - icon: linkedin
+      text: LinkedIn
+      href: https://linkedin.com
+    - icon: github
+      text: Github
+      href: https://github.com/dreanod
+
+---
+
+R actuarial recipes insurance data analysis, reserving methods, ratemaking
+and more.
+
+My name is Denis Dreano. I'm a lead actuarial model and data architecture
+developer working for Swiss Re in Switzerland. I'm developing data and
+analytical solutions for a global multi-line team of fifty actuaries. 
+

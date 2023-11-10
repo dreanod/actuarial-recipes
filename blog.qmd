@@ -1,0 +1,15 @@
+---
+title: "Latest Posts"
+listing:
+  contents: posts/**/*.qmd
+  sort: "date desc"
+  type: default
+  categories: true
+  sort-ui: false
+  filter-ui: false
+  fields: [date, title, description, categories]
+page-layout: full
+title-block-banner: true
+---
+
+

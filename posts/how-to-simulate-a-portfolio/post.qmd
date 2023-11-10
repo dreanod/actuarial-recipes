@@ -1,0 +1,426 @@
+---
+title: 'How to simulate a portfolio of insurance policies?'
+date: '2023-11-07'
+categories: ['Simulations', 'Premium Trend', 'Rate Change']
+execute: 
+  message: false
+  warning: false
+editor_options: 
+  chunk_output_type: console
+code-annotations: hover
+---
+
+Why is my first post on simulating insurance data?
+Well, the insurance industry is notorious for not easily sharing data.
+This means that the best way to study different methods is often to
+use synthetic data.  
+
+This post will go through the basics of simulating a portfolio of policies with
+R, with exposure and premium data. We will simulate data that response to
+changes due to *exposure growth*, *premium trend* and *rate change*, while
+making simplifying assumptions to keep things short. I'm planning to write
+follow-up articles that will look at ways to make the simulation more detailed.
+
+However, this is a fairly technical post as we will need to use different
+libraries for data manipulation. Date manipulation is particularly
+tricky and we will need to be careful in writing code that produces
+the inception and exiration dates with expect.
+
+# About the Data
+
+We will simulate the portfolio from Appendix A of the [Werner & Modlin Study
+Note](https://www.casact.org/sites/default/files/old/studynotes_werner_modlin_ratemaking.pdf).
+Members of the CAS (Casualty Actuarial Society) may be familiar with it, since
+it's on the syllabus of Exam 5 (Basic Ratemaking).
+
+The data come from a fictitious portfolio of property damage liability covers
+from a personal automobile insurance in the United States. Each policy in this
+portfolio is semi-annual. I will assume that each policy only covers property
+damage liability, and only covers one unit of exposure (one automobile).
+
+# Libraries and Utility Functions
+
+We will use the following packages from the [tidyverse](https://www.tidyverse.org):
+
+```{r}
+library(dplyr)     # <1>
+library(lubridate) # <2>
+library(purrr)     # <3>
+library(ggplot2)   # <4>
+library(scales)    # <5>
+```
+1. A very important package for manipulating data in data frames.
+2. A set of functions to make working with date easier.
+3. Provides a more readable alternative to *for* loops.
+4. The most popular R plotting library
+5. Useful functions for pretty printing numbers
+
+The tidyverse, particularly `dplyr`, is the state of the art for data wrangling
+in R. If you are not already familiar with it, I strongly encourage you to
+invest some time in learning it. At a high-level, `dplyr` introduces very well
+designed functions that make data wrangling problem much easier to approach.[*R
+for Data Science*](https://r4ds.hadley.nz) provides an excellent introduction
+(See Chapter 4).
+
+# Policy Data
+
+First, we have to simulate the policies. Let us state our assumptions:
+
+* We simulate a portfolio from 2010 to 2015.
+* In 2010 the insurer writes 12842 policies
+* Each year, the policy count grows by 0.5%
+* Policies are semi-annual
+* Policies are written uniformely in any given year
+
+## Number of Policies and Portfolio growth
+
+To apply the trend, I will define a convenience function that
+extrapolate a value to future years, given an annual trend:
+
+```{r}
+apply_trend <- function(value, from, to, trend) {
+  trend_period <- to - from
+  value * (1 + trend) ^ trend_period
+}
+```
+Let us use this function to calcule how many policies we have to simulate for
+each year.
+
+```{r}
+simulated_years <- 2010:2015
+initial_policy_count <- 12842
+portfolio_growth_rate <- .5 / 100
+
+annual_df <- tibble(  # <1>
+  year = simulated_years,
+  n_policies = round(apply_trend(value = initial_policy_count,
+                             from = simulated_years[1],
+                             to = simulated_years,
+                             trend = portfolio_growth_rate))
+)
+```
+1. A `tibble` is an improved version of base R data frame.
+
+```{r}
+#| results: "asis"
+#| echo: false
+library(knitr)
+library(kableExtra)
+display_table <- function(df) {
+  df |>
+    kable() |>
+    kable_styling(full_width = F,
+                  bootstrap_options = c("striped", "condensed"))
+
+}
+display_table(annual_df)
+```
+
+You will notice that we store the generated data in a data frame.
+As a general rule we should alway try to store data in a data frame.
+This is because it is usually the cleanest and most practical way
+to store data.
+
+## Policy Ids and Inception Dates
+
+Now that we have the number of policies written in each year, we
+have to simulate the policies, with their inception dates.
+We can achieve this by looping over each simulated year and generating a
+sequence of uniformely spread days in the given year. That
+uniform sequence of dates can be generated with this function:
+
+```{r}
+# A uniformely spread list of `n` dates within year `y`
+seq_date_in_year <- function(y, n) {
+  from <- first_day_of_year(y)
+  to <- first_day_of_year(y + 1)
+  seq(from, to, length.out = n + 1)[1:n] # <1>
+}
+```
+1. With the `seq` function we need this trick of asking for an extra
+   data point to have a truly uniform sequency of dates *within* a 
+   given year.
+
+`seq_date_in_year` needs two convenience functions to generate dates given a
+year:
+
+```{r}
+first_day_of_year <- function(y) {
+  ymd(paste0(y, "-01-01"))
+}
+
+last_day_of_year <- function(y) {
+  ymd(paste0(y, "-12-31"))
+}
+```
+
+We can know use `seq_date_in_year` to generate the inceptions dates
+of all policies in each of the simulated year.
+We also give each policy a unique policy id of the form `policy_<year>_<n>`,
+where `<year>` is the inception year of the policy and `<n>` means that
+the policy was the $n^{\text{th}}$ written in that year.
+
+```{r}
+generate_one_year_policy_data <- function(year, n_policies) { # <1>
+  tibble::tibble(
+    policy_id = paste("policy", year, seq(n_policies), sep = "_"),
+    inception_date = seq_date_in_year(year, n_policies),
+  )
+}
+
+policy_df <- purrr::pmap_dfr(annual_df, generate_one_year_policy_data) # <2>
+```
+1. A function to simulate the policies for one given year.
+2. `pmap_dfr` loops through each row of `annual_df` and executes the function
+   `generate_one_year_policy_data` for each year. Binds the returned data
+   frames by row to return a single data frame.
+
+```{r}
+#| results: "asis"
+#| fig-cap: "First Policy of each Simulated Year"
+#| code-fold: true
+first_policy_of_a_year <- policy_df |>
+  group_by(year(inception_date)) |>
+  summarize(policy_id = first(policy_id)) |>
+  pull(policy_id)
+policy_df |> filter(policy_id %in% first_policy_of_a_year) |> display_table()
+```
+
+## Expiration Dates
+
+Now we have to give an expiration date to each policy. Here we need to proceed
+carefully, because dates can be tricky. Since the policies are semi-annual, we
+a priori need to add 6 months to the inception date. However, adding 6 months
+to March 31st will cause problem because September 31st does not exist. We
+therefore need to use the `%m+%` function from the `lubridate` package which
+takes care of rolling back such imaginary dates to an existing date. Another
+thing we need to do is to substract one day so that the expiration date
+corresponds to the last day the policy is in force, instead of being the first
+day when the policy is *not* in force.
+
+The below code adds the new `expiration_date` column with all the above in
+mind:
+
+```{r}
+policy_df <- policy_df |>
+  mutate(expiration_date = (inception_date %m+% months(6)) - days(1))
+```
+
+```{r}
+#| results: "asis"
+#| fig-cap: "First Policy of each Simulated Year"
+#| code-fold: true
+policy_df |> filter(policy_id %in% first_policy_of_a_year) |> display_table()
+```
+
+# Exposure Data
+
+To keep things simple, I will assume tht each policy 
+only covers one automobile (one unit of exposure). I will explore
+what happens when we deviate from this assumption in latter posts.
+
+```{r}
+policy_df <- policy_df |>
+  mutate(n_expo = 1)
+```
+
+```{r}
+#| results: "asis"
+#| fig-cap: "First Policy of each Simulated Year"
+#| code-fold: true
+policy_df |> filter(policy_id %in% first_policy_of_a_year) |> display_table()
+```
+
+# Premium Data
+
+We will assume that the premium is \$87 per unit of exposure (or
+equivalently per policy) on the first day of our simulation period:
+January 1st, 2010. This premium really represents an average premium
+per exposure, but we will wait for another post to look at how 
+we can make more complex simulation that have premium vary with
+different risk characteristics.
+
+Average premiums change over time in two ways:
+
+1. By jumps. Typically, this happens after a **rate change** has been
+   implemented.
+2. Gradually. Typically, shifts in the mix of business and average
+   insurance conditions happen continuously over time and result in
+   a **premium trend**
+
+We will simulate both rates changes and premium trend in our portfolio.
+For now we initialize the premium of each policy with the initial average premium:
+
+```{r}
+initial_avg_premium <- 87
+policy_df <- policy_df |>
+  mutate(premium = initial_avg_premium * n_expo) # <1>
+```
+1. Policy premium is proportional to the exposure.
+
+```{r}
+#| results: "asis"
+#| fig-cap: "First Policy of each Simulated Year"
+#| code-fold: true
+policy_df |> filter(policy_id %in% first_policy_of_a_year) |> display_table()
+```
+
+## Rate Change
+
+We assume the same rate changes as in *Werner & Modlin*[^1]. We assume
+the rate changes impacts only policies written on or after the 
+effective date. This is generally what happens when a rate change is
+implemented.
+
+[^1]: Exhibit: Current Rate Level-1
+
+```{r}
+rate_changes <- tibble(
+  effective_date = dmy(c("04/01/2011", "07/01/2012", "10/01/2013", "07/01/2014", "10/01/2015", "01/01/2016")), # <1>
+  rate_change = c(-5.0, 10.0, 5.0, -2.0, 5.0, 5.0)/100,
+)
+```
+1. The `lubridate` function `dmy` takes a string with a *Month/Day/Year* format and
+   transforms it to a proper `Date` object.
+
+```{r}
+#| echo: false
+#| fig-cap: "Rates Changes over the Simulated Period"
+rate_changes |>
+  mutate(rate_change = percent(rate_change)) |>
+  display_table()
+```
+
+We now need to loop through each of these rate changes and increase the premium
+by the corresponding percent change *for all policies written on or
+after the effective date*.
+
+```{r}
+apply_rate_change <- function(rate_change, effective_date, premium, inception_date) { # <1>
+  if_else(inception_date >= effective_date, premium * (1 + rate_change), premium)
+}
+
+purrr::pwalk(rate_changes, function(effective_date, rate_change) { # <2>
+  policy_df$premium <<- apply_rate_change(rate_change, effective_date, # <3>
+                                          policy_df$premium, policy_df$inception_date)
+})
+```
+1. A simple function that modifies the premium after a rate change if the inception date is
+   after the rate change effective date.
+2. Loops through each row in the `rate_change` data frame.
+3. Notice the use of `<<-` that forces R to modify `policy_df` outside the anonymous
+   function that starts the line before.
+
+```{r}
+#| results: "asis"
+#| fig-cap: "First Policy of each Simulated Year"
+#| code-fold: true
+policy_df |> filter(policy_id %in% first_policy_of_a_year) |> display_table()
+```
+
+## Premium Trend
+
+We further modify the premium to reflect a 2\% premium trend.
+This trend captures the impact on premium of gradual shifts in risk 
+profiles of insureds and the insurance conditions of the policies.
+
+We need to to improve our previous `apply_trend` function to be able
+to apply a trend between any two dates:
+
+```{r}
+apply_trend <- function(value, from, to, trend) {
+  from <- if (is.Date(from)) from else first_day_of_year(from) # <1>
+  to <- if (is.Date(to)) to else first_day_of_year(to) # <1>
+
+  trend_period <- (from %--% to) / years(1) # <2>
+  value * (1 + trend) ^ trend_period
+}
+```
+1. If `from` and `to` are years, tranforms them to dates
+2. This calculate the duration in years between the `from` date and the
+   `to` date. `%--%` is a `lubridate` operator that calculates a time
+   interval between two dates. `years(1)` creates a period of one year.
+   Dividing an interval by a period calculates the interval length with
+   the period as a unit of measurement.
+
+We now use this modified version of `apply_trend` to modify the `premium`
+column with the trend.
+
+```{r}
+premium_trend <- 2 / 100
+start_of_period <- first_day_of_year(simulated_years[1])
+policy_df <- policy_df |>
+  mutate(premium = apply_trend(premium, start_of_period, inception_date, premium_trend))
+```
+
+```{r}
+#| results: "asis"
+#| fig-cap: "First Policy of each Simulated Year"
+#| code-fold: true
+policy_df |> filter(policy_id %in% first_policy_of_a_year) |> display_table()
+```
+
+# Overview of the Simulated Portfolio
+
+We have reached the end of our simulation. It is time to verify our
+results. A very good first thing to do is to calculate aggregate value
+over policy year to verify that the aggregate and average values
+make sense:
+
+```{r}
+#| fig-cap: "Written Policy Count, Total Premium and Average Premium per Inception Year"
+#| code-fold: true
+policy_df |>
+  group_by(`Inception Year` = year(inception_date)) |>
+  summarize(`Written Exposure` = sum(n_expo),
+            `Written Premium` = sum(premium),
+            `Average Premium` = `Written Premium` / `Written Exposure`) |>
+  display_table()
+```
+The easiest way to verify that policies are written evenly
+throughout a year is to look at the number of policies written per
+week:
+
+```{r}
+#| fig-cap: "Weekly Written Policy Count"
+#| code-fold: true
+policy_df |>
+  count(`Inception Week` = floor_date(inception_date, unit = "week")) |>
+  ggplot(aes(`Inception Week`, n)) +
+  coord_cartesian(ylim = c(245, 255)) +
+  geom_line() +
+  scale_x_date(date_breaks = "year") +
+  ylab("Written Policy Count")
+```
+
+From this plot we can validate that the policy count is evenly spread throughout
+any given year, and that the policy count grows at a 0.5\% rate between years.
+
+Now lets look at the average monthly premium to validate the rate changes and premium
+trend. We also overlay the timing of the rate changes to the plot.
+
+```{r}
+#| fig-cap: "Average Monthly Premium"
+#| code-fold: true
+policy_df |>
+  group_by(`Inception Month` = floor_date(inception_date, unit = "month")) |>
+  summarize(`Average Premium` = mean(premium)) |>
+  ggplot(aes(`Inception Month`, `Average Premium`)) +
+  scale_x_date(date_breaks = "year") +
+  geom_line() +
+  geom_point() +
+  geom_vline(aes(xintercept = effective_date), rate_changes, color = "grey") +
+  geom_label(aes(effective_date, 115, label = percent(rate_change)), rate_changes)
+```
+
+We can clearly identify a constant premium trend and jumps around the effective
+date of the rate changes.
+
+# Conclusion
+
+This was a fairly long post and quite technical. But we now have a
+way to simulate portfolios of policies. We will use this 
+in the next posts to do actually perform actuarial analysis.
+
+
+

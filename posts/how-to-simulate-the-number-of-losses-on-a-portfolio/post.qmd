@@ -1,0 +1,69 @@
+---
+title: How to Simulate the Number of Losses on a Portfolio?
+draft: true
+---
+
+In a [previous post](posts/how-to-simulate-a-portfolio) we simulated a portfolio
+of insurance policies. In this one we will simulate the number of losses in this
+portfolio.
+
+```{r}
+#| include: false
+#| echo: false
+library(knitr)
+knit_child("../../posts/how-to-simulate-a-portfolio/post.qmd")
+```
+
+# Choice of Frequency Distribution
+
+# Bulk Simulation
+
+```{r}
+initial_freq <- 0.0587
+freq_trend <- -1 / 100
+
+```
+1. Make annual table with frequencies
+2. Summarize n_expo per year
+3. Simulate
+4. Check results and compare
+
+# Policy-per-Policy Simulation
+
+## Calculate average frequency per Policy
+
+## Simulate poisson for each policy
+
+```{r, eval=FALSE}
+loss_df <- policy_df |>
+  mutate(trend_period = (first_day_of_year(simulated_years[1]) %--% inception_date) / years(1),
+         frequency = initial_freq * (1 + freq_trend)^trend_period,
+  mutate(n_claims = rpois(n(), lambda = frequency))
+```
+
+## Check results and compare
+
+```{r}
+loss_df |> select(inception_date, severity, frequency, n_claims) |> tail()
+sum(loss_df$n_claims) / nrow(loss_df)
+loss_df |>
+  group_by(year(inception_date)) |>
+  summarize(sum(n_claims)/n(), sum(n_claims))
+
+```
+
+# Conclusion
+
+# Severity (keep)
+```{r}
+initial_sev <- 1061.45
+sev_trend <- .5 / 100
+severity = initial_sev * (1 + sev_trend)^trend_period
+
+loss_df <- loss_df |>
+  filter(n_claims > 0) |>
+  select(policy_id, n_claims, inception_date, expiration_date, severity)
+
+sum(loss_df$n_claims)
+loss_df <- loss_df[rep(seq(nrow(loss_df)), loss_df$n_claims), ]
+```

@@ -1,0 +1,36 @@
+---
+title: How to Calculate the Calendar Year Earned Premiums
+draft: true
+---
+
+Description
+
+
+```{r, eval=FALSE}
+
+EP <- purrr::map_dbl(2011:2015, function(y) {
+  start_of_year <- ymd(paste0(y, "-01-01"))
+  end_of_year <- ymd(paste0(y, "-12-31"))
+  start_of_expo_in_year <- pmax(start_of_year, policy_df$inception_date)
+  end_of_expo_in_year <- pmin(end_of_year, policy_df$expiration_date)
+  ee <- pmax(0, (start_of_expo_in_year %--% (end_of_expo_in_year + days(1))) / years(1))
+  ep <- ee * policy_df$premium
+  sum(ep)
+}) |> set_names(2011:2015)
+EP
+EP[["2015"]]/EP[["2011"]]
+
+
+tibble(
+  CY=2011:2015,
+  EP_w=c(1122372, 1154508, 1280545, 1369976, 1397750),
+  EP_d=EP
+) |> pivot_longer(2:3) |>
+  ggplot(aes(CY, value, color=name)) +
+  geom_line()
+
+sum(EP)
+
+
+
+```
