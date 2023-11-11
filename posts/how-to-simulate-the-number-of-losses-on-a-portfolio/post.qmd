@@ -7,26 +7,154 @@ In a [previous post](posts/how-to-simulate-a-portfolio) we simulated a portfolio
 of insurance policies. In this one we will simulate the number of losses in this
 portfolio.
 
+We will need the portfolio `policy_df` that we generated in that previous post.
+This code will re-run that code and generate the right data frame.
+
 ```{r}
-#| include: false
-#| echo: false
+#| output: false
+library(tidyverse)
 library(knitr)
-knit_child("../../posts/how-to-simulate-a-portfolio/post.qmd")
+library(RCurl)
+url <- "https://api.github.com/repos/dreanod/actuarial-recipes/contents/posts/how-to-simulate-a-portfolio/post.qmd"
+header <- c(
+  Accept = 'application/vnd.github.v3.raw',
+  'User-Agent' = 'curl'
+)
+source(purl(text = getURL(url, httpheader = header), output = tempfile()))
 ```
+
+We could be interested in either bulk simulations of the total number of
+losses over a period of time, or in how many losses have been generated
+by each policy of the portfolio. We will look at both situations in this
+post.
 
 # Choice of Frequency Distribution
 
-# Bulk Simulation
+For this post, I will assume that the loss count for each policy is idenpended,
+Poisson distributed. This assumes that the timing of each loss is independent
+from one another. In other words, the fact that a policy had a loss at a given
+time does not change the distribution of future losses (for this policy and for
+the rest of the portfolio). This intuitively makes sense and, in fact, the
+experience shows that claim counts tend to be indeed Poisson distributed for the
+most part.
+
+I will assume that the frequency distribution for policies written on January
+1, 2010 is 5.87%. This means that one exposure written at this date will inccur
+on average 0.0587 losses in a year. We further assume that this frequency
+decrease by 1% every year.
 
 ```{r}
 initial_freq <- 0.0587
 freq_trend <- -1 / 100
-
 ```
-1. Make annual table with frequencies
-2. Summarize n_expo per year
-3. Simulate
-4. Check results and compare
+
+# Bulk Simulation
+
+In a bulk simulation we simulate the number of losses for a cohort of exposures
+over period of time. In this case, we will look at the
+number of losses generates by the policies in each policy year
+in the portfolio.
+
+## Calculation of the Annual Loss Frequencies
+
+Because the claim count of each policy is Poisson and they are independent,
+the total claim count for a group of policy is also poisson with
+frequency the sum of the frequency of the individual policies.
+For simplicity, we will assume that the frequency is the same for all
+policies written in the same year. Therefore, the claim count of any
+given policy year is proportional to the number of written exposure.
+
+We therefore calculate the number of written exposure per year:
+
+```{r}
+freq_df <- policy_df |>
+  group_by(policy_year = year(inception_date)) |>
+  summarize(n_written_expo = sum(n_expo))
+```
+
+```{r}
+#| code-fold: true
+#| fig-cap: "Number of Exposure Written per Year"
+display_table(freq_df)
+```
+
+Now, we need to calculate the frequency for exposures written in
+each annual cohort. The frequency needs to be trended from the
+January 1, 2010 to the average inception date of each cohort:
+
+```{r}
+initial_freq_date <- ymd("2010-01-01")
+
+freq_df <- policy_df |>
+  group_by(PY = year(inception_date)) |>
+  summarize(n_expo = sum(n_expo),
+            mean_incept_dt = mean(inception_date),
+            trending_period = (initial_freq_date %--% mean_incept_dt) / years(1),
+            trending_factor = (1 + freq_trend)^trending_period,
+            freq_per_expo = initial_freq * trending_factor,
+            total_freq = freq_per_expo * n_expo)
+```
+
+```{r}
+#| code-fold: true
+#| fig-cap: "Calculation of the Annual Aggregate Frequency of Loss"
+display_table(freq_df)
+```
+
+## Simulating the Number of Losses
+
+We now have everything needed to simulate the number of losses for
+each year:
+
+```{r}
+set.seed(100)    # <1>
+freq_df <- freq_df |> 
+  mutate(loss_count = rpois(n(), lambda = total_freq))
+```
+1. When doing random simulations, this makes sure that we can reproduce the
+   same results every time we run the code.
+
+```{r}
+#| code-fold: true
+#| fig-cap: "Simulated Loss Count per Policy Year"
+freq_df |> 
+  select(PY, total_freq, loss_count) |> 
+  display_table()
+```
+
+## Overview of the Simulated Data
+
+We can compare the expected frequency of total loss count to the
+simulated number:
+
+```{r}
+#| code-fold: true
+#| fig-cap: "Comparing Expected Claim Frequency to Simulated Loss Count"
+freq_df |> 
+  rename(`Expected Frequency` = total_freq,
+         `Simulated Loss Count` = loss_count) |>
+  pivot_longer(c("Expected Frequency", "Simulated Loss Count")) |>
+  ggplot(aes(PY, value, color = name)) +
+  geom_line() + geom_point() +
+  ylab("Loss Count") + xlab("Policy Year") +
+  labs(color = "")
+```
+
+Our simulated loss count is close to the expected frequency. However,
+the simulated number goes up and down around the expected frequency
+and we cannot discern a downward trend.
+
+To make sure that this due to the natural variability of the Poisson
+distribution we can compare the simulated figure to the 90% confidence
+interval of the distribution:
+
+```{r}
+freq_df |>
+  mutate(lower_bound = qpois(.05, total_freq),
+         upper_bound = qpois(.95, total_freq))
+```
+
+
 
 # Policy-per-Policy Simulation
 
@@ -34,17 +162,18 @@ freq_trend <- -1 / 100
 
 ## Simulate poisson for each policy
 
-```{r, eval=FALSE}
+```{r}
 loss_df <- policy_df |>
   mutate(trend_period = (first_day_of_year(simulated_years[1]) %--% inception_date) / years(1),
-         frequency = initial_freq * (1 + freq_trend)^trend_period,
+         frequency = initial_freq * (1 + freq_trend)^trend_period) |>
+  group_by(policy_id) |>
   mutate(n_claims = rpois(n(), lambda = frequency))
 ```
 
 ## Check results and compare
 
 ```{r}
-loss_df |> select(inception_date, severity, frequency, n_claims) |> tail()
+loss_df |> select(inception_date, frequency, n_claims) |> tail()
 sum(loss_df$n_claims) / nrow(loss_df)
 loss_df |>
   group_by(year(inception_date)) |>
@@ -56,6 +185,7 @@ loss_df |>
 
 # Severity (keep)
 ```{r}
+#| eval: false
 initial_sev <- 1061.45
 sev_trend <- .5 / 100
 severity = initial_sev * (1 + sev_trend)^trend_period

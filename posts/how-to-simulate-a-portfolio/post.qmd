@@ -7,7 +7,6 @@ execute:
   warning: false
 editor_options: 
   chunk_output_type: console
-code-annotations: hover
 ---
 
 Why is my first post on simulating insurance data?
