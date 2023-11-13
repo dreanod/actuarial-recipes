@@ -17,7 +17,6 @@ execute:
 
 code-annotations: hover
 
-website:
-  comments:
-    utterances:
-      repo: dreanod/actuarial-recipes
+comments:
+  utterances:
+    repo: dreanod/actuarial-recipes

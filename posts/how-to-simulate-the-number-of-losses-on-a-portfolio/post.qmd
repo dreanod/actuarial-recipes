@@ -149,31 +149,67 @@ distribution we can compare the simulated figure to the 90% confidence
 interval of the distribution:
 
 ```{r}
+#| fig-cap: "Comparing Simulated Loss Count to Confidence Intervals"
 freq_df |>
   mutate(lower_bound = qpois(.05, total_freq),
-         upper_bound = qpois(.95, total_freq))
+         upper_bound = qpois(.95, total_freq)) |>
+  select(PY, total_freq, lower_bound, upper_bound, loss_count) |>
+  display_table()
+```
+
+We can see from the table that all simulated loss counts fall within
+the 90\% confidence interval. This helps us to validate our results.
+
+# Policy-per-Policy Simulation
+
+The previous simulation only tells us about the total number of losses
+generated in each cohort. However it does not tell which policy or
+exposure generated each of the loss. This may be too limiting in 
+some applications. For example, we may want to have the severity
+distribution of losses vary depending on the exposure characteristics.
+In this case, we need to link each loss to its policy. We will see
+how to do this in the rest of this post.
+
+## Calculate average frequency per Policy
+
+First, we need to calculate the expected frequency of loss for each
+policy. We do this by trending the initial frequency from
+January 1, 2010 to the inception date of each policy:
+
+```{r}
+policy_df <- policy_df |>
+  mutate(trend_period = (initial_freq_date %--% inception_date) / years(1),
+         trend_factor = (1 + freq_trend)^trend_period,
+         frequency = initial_freq * trend_factor )
+```
+
+```{r}
+policy_df |>
+  select(policy_id, inception_date, trend_period, trend_factor, frequency) |>
+  head() |> 
+  display_table()
 ```
 
 
 
-# Policy-per-Policy Simulation
-
-## Calculate average frequency per Policy
-
 ## Simulate poisson for each policy
 
 ```{r}
-loss_df <- policy_df |>
-  mutate(trend_period = (first_day_of_year(simulated_years[1]) %--% inception_date) / years(1),
-         frequency = initial_freq * (1 + freq_trend)^trend_period) |>
-  group_by(policy_id) |>
-  mutate(n_claims = rpois(n(), lambda = frequency))
+policy_df <- policy_df |>
+  mutate(n_claims = rpois(n(), frequency))
+```
+
+```{r}
+policy_df |>
+  head() |> 
+  display_table()
 ```
 
 ## Check results and compare
 
 ```{r}
-loss_df |> select(inception_date, frequency, n_claims) |> tail()
+loss_df <- policy_df |> 
+  select(inception_date, frequency, n_claims) |> tail()
 sum(loss_df$n_claims) / nrow(loss_df)
 loss_df |>
   group_by(year(inception_date)) |>

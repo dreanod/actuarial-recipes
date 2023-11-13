@@ -1,0 +1,6 @@
+- source: project
+  netlify:
+    - id: 443aa0b7-49f7-4784-bd58-8b83985c45d3
+      url: 'https://actuarial-recipes.com'
+    - id: a2072be7-2577-4526-b28f-8beaf18ab42e
+      url: 'https://taupe-cucurucho-37df3e.netlify.app'
