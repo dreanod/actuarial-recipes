@@ -10,19 +10,48 @@ In a [previous post](../how-to-simulate-a-portfolio/post.html) we simulated a po
 of insurance policies. Today, we simulate its loss count.
 
 We will need the portfolio data frame `policy_df` that we generated back then.
-With the below, we re-run that code.
+With the below, we re-run that code. The code below will regenerate that
+data with the `actuarialRecipes` package:
 
 ```{r}
-#| output: false
-library(tidyverse)
-library(knitr)
-library(RCurl)
-url <- "https://api.github.com/repos/dreanod/actuarial-recipes/contents/posts/how-to-simulate-a-portfolio/post.qmd"
-header <- c(
-  Accept = 'application/vnd.github.v3.raw',
-  'User-Agent' = 'curl'
+# devtools::install_github("dreanod/actuarialRecipes")
+library(actuarialRecipes)
+
+simulated_years <- 2010:2015
+initial_policy_count <- 12842
+portfolio_growth_rate <- .5 / 100
+initial_avg_premium <- 87
+rate_changes <- tibble::tibble(
+  effective_date = lubridate::dmy(c(
+    "04/01/2011", "07/01/2012", "10/01/2013",
+    "07/01/2014", "10/01/2015", "01/01/2016"
+  )),
+  rate_change = c(-5.0, 10.0, 5.0, -2.0, 5.0, 5.0) / 100,
 )
-source(purl(text = getURL(url, httpheader = header), output = tempfile()))
+premium_trend <- 2 / 100
+policy_length <- 6
+n_expo_per_policy <- 1
+
+policy_df <- simulate_portfolio(
+  sim_years = simulated_years,
+  initial_policy_count = initial_policy_count,
+  ptf_growth = portfolio_growth_rate,
+  n_expo_per_policy = n_expo_per_policy,
+  policy_length = policy_length,
+  initial_avg_premium = initial_avg_premium,
+  premium_trend = premium_trend,
+  rate_change_data = rate_changes
+)
+ policy_df
+```
+
+We also need to load these packages from the *tidyverse*:
+
+```{r}
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+library(tidyr)
 ```
 
 We can be interested in either bulk simulations of the total number of
@@ -223,7 +252,9 @@ policy_df <- policy_df |>
 #| fig-cap: "Simulated Claim Count for the first Policy of Each Year"
 policy_df |>
   select(policy_id, inception_date, frequency, n_claims) |>
-  filter(policy_id %in% first_policy_of_a_year) |>
+  group_by(policy_year = year(inception_date)) |>
+  filter(row_number() == 1) |>
+  ungroup() |>
   display_table()
 ```
 
