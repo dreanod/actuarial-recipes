@@ -35,7 +35,7 @@ it's on the syllabus of Exam 5 (Basic Ratemaking).
 The data come from a fictitious portfolio of property damage liability covers
 from a personal automobile insurance in the United States. Each policy in this
 portfolio is semi-annual. I will assume that each policy only covers property
-damage liability, and only covers one unit of exposure (one automobile).
+damage liability, and only covers one unit of exposure (one automobile). 
 
 # Libraries and Utility Functions
 

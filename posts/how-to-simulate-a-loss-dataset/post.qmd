@@ -1,0 +1,214 @@
+---
+title: How to Simulate a Loss Dataset?
+categories: ['Simulations', 'Severity', 'Trend']
+draft: true
+editor_options: 
+  chunk_output_type: console
+---
+
+In our [previous post](../how-to-simulate-a-portfolio/post.html),
+we have seen how to simulate a portfolio of policies. Then, we have
+seen how to simulate [the claim count](../how-to-simulate-the-number-of-losses-on-a-portfolio)
+for these policies. In this post we will go one step further
+and simulate the actual loss data associate with the portfolio data
+and the claim count.
+
+In particular we will simulate two important loss attributes:
+
+1. The occurrence date of the loss
+2. The loss amount
+
+We are building up on top of the code from the [the claim count](../how-to-simulate-the-number-of-losses-on-a-portfolio)
+article. Here is how to recreate the `policy_df` data frame
+that contains the policy data, as well as the number of simulated
+claims per policy:
+
+```{r}
+#| code-fold: true
+# devtools::install_github("dreanod/actuarialRecipes")
+library(actuarialRecipes)
+
+# Portfolio Simulation Parameters
+
+simulated_years <- 2010:2015
+initial_policy_count <- 12842
+portfolio_growth_rate <- .5 / 100
+initial_avg_premium <- 87
+rate_changes <- tibble::tibble(
+  effective_date = lubridate::dmy(c(
+    "04/01/2011", "07/01/2012", "10/01/2013",
+    "07/01/2014", "10/01/2015", "01/01/2016"
+  )),
+  rate_change = c(-5.0, 10.0, 5.0, -2.0, 5.0, 5.0) / 100,
+)
+premium_trend <- 2 / 100
+policy_length <- 6
+n_expo_per_policy <- 1
+
+# Simulates the Portfolio Data
+
+policy_df <- simulate_portfolio(
+  sim_years = simulated_years,
+  initial_policy_count = initial_policy_count,
+  ptf_growth = portfolio_growth_rate,
+  n_expo_per_policy = n_expo_per_policy,
+  policy_length = policy_length,
+  initial_avg_premium = initial_avg_premium,
+  premium_trend = premium_trend,
+  rate_change_data = rate_changes
+)
+
+# Loss Count Simulation Parameters
+
+initial_freq <- 0.0587
+initial_freq_date <- lubridate::ymd("2010-01-01")
+freq_trend <- -1 / 100
+
+# Simulates the Loss Count and Add it to policy_df
+
+set.seed(100)
+policy_df$n_claims <- simulate_loss_count(
+  portfolio = policy_df,
+  initial_freq = initial_freq,
+  initial_freq_date = initial_freq_date,
+  freq_trend = freq_trend
+)
+```
+We load the usual libraries:
+
+```{r}
+library(tidyverse)
+```
+
+# Creating the Loss Data Table
+
+We are starting off from the `policy_df` data frame that has 
+
+```{r}
+# Show here policy_df
+```
+
+The first step is to create a loss table object:
+
+```{r}
+loss_df <- policy_df |>
+  dplyr::filter(n_claims > 0) |>
+  select(policy_id, n_claims, inception_date, expiration_date)
+
+loss_df <- loss_df[rep(seq(nrow(loss_df)), loss_df$n_claims), ] # <1>
+
+loss_df <- loss_df |>
+  select(- n_claims) |> # <2>
+  group_by(policy_id) |>
+  mutate(claim_id = paste0(policy_id, "_", seq(n()))) |> # <3>
+  ungroup()
+```
+1. Creates one row per loss with the associated policy information
+2. Removes `n_claims` column
+3. Creates a `claim_id` column
+
+```{r}
+#| code-fold: true
+#| fig-cap: "Number of Exposures Written per Year"
+loss_df |>
+  head() |>
+  display_table()
+```
+Check the number of rows
+
+We can check that we have created the right number of losses by 
+comparing the row count in `loss_df` to the total number of losses
+simulated in `policy_df`:
+
+```{r}
+print(paste("Row count in loss_df:", nrow(loss_df)))
+print(paste("Total number of losses in policy_df:", sum(policy_df$n_claims)))
+```
+
+# Occurrence date
+
+poisson process and distribution of date of events
+
+Simulating uniform random dates
+
+```{r}
+set.seed(12)
+loss_df <- loss_df |>
+  mutate(policy_duration = period_length(inception_date, expiration_date, "day"),
+         occurrence_date = inception_date + days(round(runif(n()) * policy_duration)))
+```
+
+```{r}
+#| code-fold: true
+#| fig-cap: "Number of Exposures Written per Year"
+loss_df |>
+  head() |>
+  display_table()
+```
+
+Checking uniformity:
+
+- Aggregate
+- graph
+
+# Severity (keep)
+
+## Choice of severity distribution: gamma/exponential
+
+## Average Severity
+
+Trending
+
+```{r}
+initial_sev <- 1061.45
+initial_sev_date <- ymd("2010-01-01")
+sev_trend <- .5 / 100
+
+loss_df <- loss_df |>
+  mutate(
+    trend_period = period_length(
+      begin = initial_sev_date, 
+      end = occurrence_date, 
+      unit = "year"),
+    avg_severity = initial_sev * (1 + sev_trend)^trend_period
+  )
+```
+
+```{r}
+#| code-fold: true
+#| fig-cap: "Average Severity for the First Simulated Claims"
+loss_df |>
+  select(claim_id, policy_duration, occurrence_date, trend_period, avg_severity) |>
+  head() |>
+  display_table()
+```
+
+## Loss Size Simulation
+
+```{r}
+set.seed(8)
+loss_df <- loss_df |>
+  mutate(loss_amount = rexp(n(), rate = 1 / avg_severity))
+```
+
+## Checking the Results
+
+```{r}
+loss_df |>
+  group_by(AY = year(occurrence_date)) |>
+  summarize(avg_severity = mean(avg_severity),
+            average_loss = mean(loss_amount)) |>
+  display_table()
+```
+
+
+```{r}
+loss_df |>
+  group_by(accident_month = floor_date(occurrence_date, "month")) |>
+  summarize(avg_severity = mean(avg_severity),
+            average_loss = mean(loss_amount)) |>
+  pivot_longer(cols = c(avg_severity, average_loss)) |>
+  ggplot(aes(accident_month, value, color = name)) +
+  geom_point() + geom_line()
+```
+
